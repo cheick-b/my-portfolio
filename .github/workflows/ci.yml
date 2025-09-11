@@ -18,6 +18,6 @@ jobs:
         run: docker build -t ballyc/portfolio .
       - name: Push image
         run: |
-            docker login -u ballyc -p ${{secrets.REGISTRY_PASS}}
-            docker push ballyc/portfolio
+          docker login -u ${{secrets.REGISTRY_USER}} -p ${{secrets.REGISTRY_PASS}}
+          docker push ballyc/portfolio
           
