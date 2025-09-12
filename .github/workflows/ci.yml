@@ -1,25 +1,3 @@
-
-#name: CI
-
-#on:
- # push:
-  #  branches: [ "main" ]
-  #pull_request:
-   # branches: [ "main" ]
-  
-#jobs:
-  
- # build:
-    
-  #  runs-on: ubuntu-latest
-   # steps:
-    #  - uses: actions/checkout@v4   
-     # - name: Build image
-      #  run: docker build -t ballyc/portfolio .
-      #- name: Push image
-       # run: |
-        #  docker login -u ballyc -p ${{secrets.REGISTRY_PASS}}
-         # docker push ballyc/portfolio
           
 name: CI
 
