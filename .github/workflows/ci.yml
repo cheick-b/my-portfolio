@@ -18,6 +18,15 @@ jobs:
         run: |
               docker build -t ${{secrets.REGISTRY_USER}}/portfolio:${{github.run_number}} .
               docker build -t ${{secrets.REGISTRY_USER}}/portfolio .
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{secrets.REGISTRY_USER}}/portfolio:${{github.run_number}}
+          format: table
+          exit-code: 1
+          severity: CRITICAL,HIGH
+          
       - name: Push image
         run: |
             docker login -u ${{secrets.REGISTRY_USER}} -p ${{secrets.REGISTRY_PASS}}
