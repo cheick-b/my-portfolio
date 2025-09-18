@@ -62,11 +62,8 @@ jobs:
             ECR_REPOSITORY=portfolio
             IMAGE_TAG=${{ github.run_number }}
 
-            
             docker rm -f resume || true
 
-            
             docker pull $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
-            
             docker run -d --name resume -p 8080:5001 $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
