@@ -1,69 +1,80 @@
-name: CI
+name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
-  build:
+  build-and-scan:
     runs-on: ubuntu-latest
-    
+    permissions:
+      id-token: write
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      # Configure AWS credentials
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ secrets.ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
 
-      # Login to Amazon ECR
       - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@v1
 
-      # Build, tag, and push the Docker image to ECR
-      - name: Build, tag, and push image to Amazon ECR
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: portfolio   # 👈 name of your ECR repo
-          IMAGE_TAG: ${{ github.run_number }}
+      - name: Build Docker Image
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          IMAGE_URI="${{ secrets.IMAGE_URI}}"
+          IMAGE_TAG="${{ github.run_number }}"
+          docker build -t $IMAGE_URI:$IMAGE_TAG .
 
-  deploy: 
-    needs: build
-    runs-on: ubuntu-latest
-    steps: 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Scan local image with Trivy
+        uses: aquasecurity/trivy-action@0.20.0
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          image-ref: "${{ secrets.IMAGE_URI}}:${{ github.run_number }}"
+          format: 'table'
+          exit-code: '0'
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+      - name: Push Docker Image to ECR
+        run: |
+          IMAGE_URI="${{ secrets.IMAGE_URI}}"
+          IMAGE_TAG="${{ github.run_number }}"
+          docker push $IMAGE_URI:$IMAGE_TAG
+          docker tag $IMAGE_URI:$IMAGE_TAG $IMAGE_URI:latest
+          docker push $IMAGE_URI:latest
 
-      - name: SSH to Server and Deploy Container
+  deploy:
+    needs: build-and-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH to Server and deploy
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.KEY }}
           script: |
-            ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
-            ECR_REPOSITORY=portfolio
-            IMAGE_TAG=${{ github.run_number }}
+            # Set image URI and tag directly
+            IMAGE_URI="${{ secrets.IMAGE_URI}}"
+            IMAGE_TAG="${{ github.run_number }}"
+            AWS_REGION="${{ vars.AWS_REGION }}"
 
+            echo "Using image: $IMAGE_URI:$IMAGE_TAG"
+
+            # Login to ECR on the remote host (host already has AWS credentials)
+            aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$(echo $IMAGE_URI | cut -d'/' -f1)"
+
+            # Pull the Docker image
+            docker pull "$IMAGE_URI:$IMAGE_TAG"
+
+            # Stop/remove old container if exists
             docker rm -f resume || true
 
-            docker pull $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-
-            docker run -d --name resume -p 8080:5001 $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+            # Run the new container
+            docker run -d --name resume -p 8080:5001 "$IMAGE_URI:$IMAGE_TAG"
