@@ -6,56 +6,57 @@ on:
       - main
 
 jobs:
-  build-and-deploy:
+  build:
+    name: Build and Push to ECR
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Checkout code
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v3
 
-      # Step 2: Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1   # Change if your ECR repo is in another region
+          aws-region: ${{ secrets.AWS_REGION }}
 
-      # Step 3: Login to Amazon ECR
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # Step 4: Build, Tag, and Push Docker image
-      - name: Build, Tag, and Push Docker image
+      - name: Build, Tag, and Push Docker Image
         run: |
-          ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+          ECR_REGISTRY=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
           ECR_REPOSITORY=portfolio
           IMAGE_TAG=${{ github.run_number }}
 
-          echo "Building Docker image..."
+          echo "Building image..."
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-
+          
           echo "Pushing image to ECR..."
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-      # Step 5: Deploy to Server over SSH
-      - name: SSH to Server and Deploy Container
+  deploy:
+    name: Deploy to EC2
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: SSH and Deploy
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.KEY }}
           script: |
-            ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+            ECR_REGISTRY=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
             ECR_REPOSITORY=portfolio
             IMAGE_TAG=${{ github.run_number }}
 
-            echo "Logging in to ECR on server..."
-            aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
+            echo "Logging in to ECR..."
+            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
+              | docker login --username AWS --password-stdin $ECR_REGISTRY
 
             echo "Stopping old container (if exists)..."
             docker rm -f resume || true
