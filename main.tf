@@ -1,5 +1,5 @@
 provider "aws" {
-  region = "us-east-1" # change to your region
+  region = "us-east-1"
 }
 
 # --- Networking ---
@@ -7,10 +7,17 @@ resource "aws_vpc" "ecs_vpc" {
   cidr_block = "10.0.0.0/16"
 }
 
-resource "aws_subnet" "ecs_subnet" {
+resource "aws_subnet" "ecs_subnet_1" {
   vpc_id                  = aws_vpc.ecs_vpc.id
   cidr_block              = "10.0.1.0/24"
   availability_zone       = "us-east-1a"
+  map_public_ip_on_launch = true
+}
+
+resource "aws_subnet" "ecs_subnet_2" {
+  vpc_id                  = aws_vpc.ecs_vpc.id
+  cidr_block              = "10.0.2.0/24"
+  availability_zone       = "us-east-1b"
   map_public_ip_on_launch = true
 }
 
@@ -27,8 +34,13 @@ resource "aws_route_table" "ecs_rt" {
   }
 }
 
-resource "aws_route_table_association" "ecs_rta" {
-  subnet_id      = aws_subnet.ecs_subnet.id
+resource "aws_route_table_association" "ecs_rta_1" {
+  subnet_id      = aws_subnet.ecs_subnet_1.id
+  route_table_id = aws_route_table.ecs_rt.id
+}
+
+resource "aws_route_table_association" "ecs_rta_2" {
+  subnet_id      = aws_subnet.ecs_subnet_2.id
   route_table_id = aws_route_table.ecs_rt.id
 }
 
@@ -36,27 +48,25 @@ resource "aws_route_table_association" "ecs_rta" {
 resource "aws_security_group" "ecs_sg" {
   vpc_id = aws_vpc.ecs_vpc.id
 
-  # Allow ALB to access ECS tasks on container port
   ingress {
-    from_port       = 5001
-    to_port         = 5001
-    protocol        = "tcp"
-    cidr_blocks     = ["0.0.0.0/0"]
+    from_port   = 5001
+    to_port     = 5001
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Allow HTTP traffic to ALB on port 80
   ingress {
-    from_port       = 80
-    to_port         = 80
-    protocol        = "tcp"
-    cidr_blocks     = ["0.0.0.0/0"]
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   egress {
-    from_port       = 0
-    to_port         = 0
-    protocol        = "-1"
-    cidr_blocks     = ["0.0.0.0/0"]
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 }
 
@@ -93,8 +103,8 @@ resource "aws_ecs_task_definition" "portfolio_task" {
   family                   = "portfolio-task"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  cpu                      = "256"   # 0.25 vCPU
-  memory                   = "512"   # 512 MB
+  cpu                      = "256"
+  memory                   = "512"
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
 
   container_definitions = jsonencode([{
@@ -114,7 +124,10 @@ resource "aws_lb" "portfolio_alb" {
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.ecs_sg.id]
-  subnets            = [aws_subnet.ecs_subnet.id]
+  subnets            = [
+    aws_subnet.ecs_subnet_1.id,
+    aws_subnet.ecs_subnet_2.id
+  ]
 }
 
 # --- Target Group ---
@@ -157,7 +170,7 @@ resource "aws_ecs_service" "portfolio_service" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = [aws_subnet.ecs_subnet.id]
+    subnets          = [aws_subnet.ecs_subnet_1.id, aws_subnet.ecs_subnet_2.id]
     security_groups  = [aws_security_group.ecs_sg.id]
     assign_public_ip = true
   }
@@ -170,4 +183,5 @@ resource "aws_ecs_service" "portfolio_service" {
 
   depends_on = [aws_lb_listener.portfolio_listener]
 }
+
 
